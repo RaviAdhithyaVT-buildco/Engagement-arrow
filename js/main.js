@@ -49,6 +49,7 @@ function finishOpening(){
   intro.classList.add('hide');
   document.body.style.overflow='auto';
   window.scrollTo({top:0,behavior:'smooth'});
+  startTour();
 }
 
 function openEnvelope(){
@@ -133,10 +134,21 @@ letterCard.addEventListener('keydown',e=>{
   const ifr=document.createElement('iframe');
   ifr.src=u.toString(); ifr.title=''; ifr.tabIndex=-1; ifr.setAttribute('aria-hidden','true');
   ifr.style.width=VW+'px'; ifr.style.height=VH+'px';
-  holder.appendChild(ifr);
   function fit(){ ifr.style.setProperty('--s',(card.clientWidth/VW).toFixed(5)); }
-  fit(); addEventListener('resize',fit); addEventListener('load',fit);
+  /* Mount the miniature only after the main page has loaded, so the envelope
+     screen gets all the bandwidth first. It is hidden until the envelope opens. */
+  let mounted=false;
+  function mount(){
+    if(mounted)return; mounted=true;
+    holder.appendChild(ifr); fit();
+  }
+  addEventListener('resize',fit); addEventListener('load',fit);
   if(window.ResizeObserver) new ResizeObserver(fit).observe(card);
+  function later(){ (window.requestIdleCallback||function(f){setTimeout(f,300)})(mount,{timeout:1500}); }
+  if(document.readyState==='complete') later(); else addEventListener('load',later);
+  /* safety: guest opens the envelope before idle fires */
+  if(waxSeal) waxSeal.addEventListener('click',mount);
+  if(letterSlot) letterSlot.addEventListener('click',mount);
 })();
 
 /* Scroll reveals */
@@ -180,7 +192,7 @@ document.getElementById('calendarBtn').addEventListener('click',()=>{
 
 /* Native share where supported */
 document.getElementById('shareBtn').addEventListener('click',async()=>{
-  const link=location.origin+location.pathname;
+  const link=document.querySelector('meta[property="og:url"]').content;
   const data={
     title:'Ravi Adhithya & Haripritha — Engagement',
     text:'You are invited to celebrate our engagement on 1 November 2026 at Preethika Mahal, Chennai.',
@@ -197,28 +209,85 @@ document.getElementById('shareBtn').addEventListener('click',async()=>{
   }
 });
 
-/* Persistent scroll cue — advances through the sections and
-   hides on the last one so guests always know there is more. */
-const scrollCue=document.getElementById('scrollCue');
-if(scrollCue){
-  const sections=Array.from(document.querySelectorAll('main > section'));
+/* =========================================================
+   Auto scroll tour + golden rod/rings progress indicator.
+   After the envelope opens, the page glides through each section
+   (5s each) once. The rings descend the rod in sync. Any manual
+   interaction cancels the tour and hands control back; the rod
+   then tracks the guest's own scroll position.
+   ========================================================= */
+const scrollRod=document.getElementById('scrollRod');
+const scrollRodRings=document.getElementById('scrollRodRings');
+const tourSections=Array.from(document.querySelectorAll('main > section'));
+let tourActive=false;
+let tourTimer=null;
+let tourStep=0;
 
-  /* Jump to the section just below the current scroll position */
-  scrollCue.addEventListener('click',()=>{
-    const y=window.scrollY;
-    const next=sections.find(s=>s.offsetTop>y+window.innerHeight*0.5);
-    if(next) next.scrollIntoView({behavior:'smooth'});
+function setRodProgress(p){
+  if(scrollRodRings) scrollRodRings.style.setProperty('--rod-progress',Math.max(0,Math.min(1,p)).toFixed(4));
+}
+
+/* progress the rings from the current scroll position (manual mode) */
+function syncRodToScroll(){
+  const max=document.documentElement.scrollHeight-window.innerHeight;
+  setRodProgress(max>0 ? window.scrollY/max : 0);
+}
+
+function endTour(){
+  if(!tourActive)return;
+  tourActive=false;
+  clearTimeout(tourTimer);
+  window.removeEventListener('wheel',cancelTour);
+  window.removeEventListener('touchmove',cancelTour);
+  window.removeEventListener('keydown',cancelTour);
+  /* hand scroll tracking back to the guest */
+  window.addEventListener('scroll',syncRodToScroll,{passive:true});
+  syncRodToScroll();
+}
+
+function cancelTour(){ endTour(); }
+
+function tourNext(){
+  if(!tourActive)return;
+  if(tourStep>=tourSections.length){
+    endTour();
+    return;
+  }
+  const section=tourSections[tourStep];
+  section.scrollIntoView({behavior:'smooth'});
+  setRodProgress(tourSections.length>1 ? tourStep/(tourSections.length-1) : 1);
+  tourStep++;
+  tourTimer=setTimeout(tourNext,5000);   /* 5s per section */
+}
+
+function startTour(){
+  if(tourActive || !tourSections.length) return;
+  tourActive=true;
+  tourStep=0;
+  if(scrollRod) scrollRod.classList.add('show');
+  /* cancel the moment the guest takes over */
+  window.addEventListener('wheel',cancelTour,{passive:true});
+  window.addEventListener('touchmove',cancelTour,{passive:true});
+  window.addEventListener('keydown',cancelTour);
+  /* let the intro finish hiding, then begin */
+  tourTimer=setTimeout(tourNext,900);
+}
+
+
+/* Envelope screen background toggle — switch between the floral
+   frame and a plain background. */
+const bgToggle=document.getElementById('bgToggle');
+if(bgToggle && intro){
+  bgToggle.addEventListener('click',e=>{
+    e.stopPropagation();
+    const plain=intro.classList.toggle('plain-bg');
+    bgToggle.setAttribute('aria-pressed',String(plain));
+    bgToggle.setAttribute('aria-label',plain?'Switch to the floral background':'Switch to a plain background');
+    const icon=bgToggle.querySelector('.bg-toggle-icon');
+    const label=bgToggle.querySelector('.bg-toggle-label');
+    if(label) label.textContent=plain?'Floral':'Plain';
+    if(icon) icon.innerHTML=plain?'&#127800;':'&#10052;';
   });
-
-  /* Show on the first screen only — hide once the guest scrolls
-     past Home into the content below. */
-  const updateCue=()=>{
-    const pastHome=window.scrollY>window.innerHeight*0.35;
-    scrollCue.classList.toggle('hide',pastHome);
-  };
-  window.addEventListener('scroll',updateCue,{passive:true});
-  window.addEventListener('resize',updateCue,{passive:true});
-  updateCue();
 }
 
 /* Start with the page behind the invitation locked */
